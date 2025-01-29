@@ -1,0 +1,2 @@
+PASSMAN_LIST=$(passman list)
+set -A complete_passman -- $PASSMAN_LIST list show generate insert init add
