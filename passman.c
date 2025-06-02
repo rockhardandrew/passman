@@ -237,7 +237,7 @@ void generate(char *path, int length)
     fclose(passwordfile);
 }
 
-void walk(char *path, int len)
+void walk(char *path, int len, int issubdir)
 {
     struct dirent *de;
     DIR *dr = opendir(path);
@@ -257,9 +257,13 @@ void walk(char *path, int len)
 	    int length = strlen(path) + strlen(de->d_name) + 3;
 	    char dir[length];
 	    sprintf(dir, "%s/%s", path, de->d_name);
-	    walk(dir, len);
+	    walk(dir, len, 1);
 	} else {
+        if(issubdir){
 	    printf("%s/%s\n", path + len, de->d_name);
+        } else {
+        puts(de->d_name);
+        }
 	}
     }
     closedir(dr);
@@ -346,7 +350,7 @@ int main(int argc, char *argv[])
     } else if (strcmp(argv[1], "list") == 0) {
 	char path[500];
 	sprintf(path, "%s/.passman-store/", getenv("HOME"));
-	walk(path, strlen(path)+1);
+	walk(path, strlen(path)+1, 0);
     } else {
 	puts("command not found");
 	return 0;
