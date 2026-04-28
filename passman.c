@@ -37,8 +37,17 @@ struct verifyreturn {
     int matches;
 };
 struct stat st = { 0 };
+
 char path[4096];
-void password_gen(uint8_t * buf, int length)
+
+void printusage()
+{
+    fputs
+	("Usage:\n\tpassman help\tdisplays help message\n\tpassman generate [name] [length]\tgenerates a password and securely stores it\n\tpassman show [name]\tprints the unencrypted value of a stored password\n\tpassman add\tprompts for a password and securely stores it\n\tpassman list\tlists the passwords that are stored\n",
+	 stderr);
+}
+
+void password_gen(uint8_t *buf, int length)
 {
     char characters[81] =
 	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~=+%^*()[]{}/!@#$?|";
@@ -75,14 +84,15 @@ int getpasswd(char password[64])
 }
 
 int initpath(char *file)
-{	struct stat st = { 0 };
-	snprintf(path, 4096, "%s/.passman-store/%s", getenv("HOME"), file);
-	/* return 1 if .passman-store exists and 0 if it doesn't */
-	if(stat(path, &st) == -1) {
+{
+    struct stat st = { 0 };
+    snprintf(path, 4096, "%s/.passman-store/%s", getenv("HOME"), file);
+    /* return 1 if .passman-store exists and 0 if it doesn't */
+    if (stat(path, &st) == -1) {
 	return 0;
-	} else{
+    } else {
 	return 1;
-	}
+    }
 }
 
 struct verifyreturn verify(char password[64])
@@ -126,16 +136,20 @@ struct verifyreturn verify(char password[64])
     return returnval;
 }
 
-void init()
+int init()
 {
     int exists = initpath("");
-    if(exists){
-	fputs("~/.passman-store already exists passman has already been initialized.\n", stderr);
-	return;
+    if (exists) {
+	fputs
+	    ("~/.passman-store already exists passman has already been initialized.\n",
+	     stderr);
+	return 1;
     } else {
 	mkdir(path, 0770);
     }
-    fputs("Enter the password that you want you use for the encryption key\n", stderr);
+    fputs
+	("Enter the password that you want you use for the encryption key\n",
+	 stderr);
     char password[64];
     getpasswd(password);
     fputs("Confirm password", stderr);
@@ -143,7 +157,7 @@ void init()
     getpasswd(confirm_password);
     if (strcmp(password, confirm_password) != 0) {
 	fputs("passwords don't match\n", stderr);
-	return;
+	return 1;
     }
     uint8_t key[32];
     int length = strlen(password);
@@ -160,7 +174,7 @@ void init()
 	/* Wipe secrets if they are no longer needed */
 	fputs("malloc failed\n", stderr);
 	crypto_wipe(uintpass, length);
-	return;
+	return 1;
     }
     arc4random_buf(salt, 16);
     crypto_argon2i(key, 32, work_area, nb_blocks, nb_iterations, uintpass,
@@ -173,23 +187,25 @@ void init()
     FILE *hashfile = fopen(path, "wb");
     if (hashfile == NULL) {
 	fputs("file couldn't be opened\n", stderr);
-	return;
+	return 1;
     }
     fwrite(hash, 1, 32, hashfile);
     fwrite(salt, 1, 16, hashfile);
     crypto_wipe(hash, 32);
     fclose(hashfile);
+    return 0;
 }
 
-void add(char *pwpath)
+int add(char *pwpath)
 {
     char password[64];
     fputs("put your key password\n", stderr);
     getpasswd(password);
     struct verifyreturn key = verify(password);
     if (key.matches == 0) {
-	fputs("the password you entered does not match with the key\n", stderr);
-	return;
+	fputs("the password you entered does not match with the key\n",
+	      stderr);
+	return 1;
     }
     fputs("put the password you'd like to add\n", stderr);
     char password2[64];
@@ -209,28 +225,36 @@ void add(char *pwpath)
     crypto_wipe(key.key, 32);
     crypto_wipe(uintpassword, length);
     int exists = initpath(pwpath);
-    if (exists){
+    if (exists) {
 	fputs("password already exists, try deleting it first\n", stderr);
-	return;
+	return 1;
     }
     FILE *passwordfile = fopen(path, "wb");
     fwrite(mac, 1, 16, passwordfile);
     fwrite(nonce, 1, 24, passwordfile);
     fwrite(encrypted_password, 1, length, passwordfile);
     fclose(passwordfile);
+    return 0;
 }
 
-void generate(char *pwpath, int length)
+int generate(char *pwpath, int length)
 {
+/* since int length is created with atoi make sure nones fishy */
+    if (length < 1 || length > 128) {
+	printusage();
+	return 1;
+    }
+
     uint8_t generatedpass[length];
     password_gen(generatedpass, length);
     char password[64];
     fputs("put your key password\n", stderr);
     getpasswd(password);
     struct verifyreturn key = verify(password);
-    if (key.matches == 0) {
-	fputs("the password you entered does not match with the key\n", stderr);
-	return;
+    if (key.matches != 1) {
+	fputs("the password you entered does not match with the key\n",
+	      stderr);
+	return 1;
     }
     uint8_t nonce[24];
     uint8_t mac[16];
@@ -239,15 +263,22 @@ void generate(char *pwpath, int length)
     crypto_lock(mac, encrypted_password, key.key, nonce, generatedpass,
 		length);
     int exists = initpath(pwpath);
-    if (exists){
+    if (exists) {
 	fputs("password already exists, try deleting it first\n", stderr);
+	return 1;
     }
     FILE *passwordfile = fopen(path, "wb");
+    if (passwordfile == NULL) {
+	fputs("failed to open path\n", stderr);
+	return 1;
+    }
     fwrite(mac, 1, 16, passwordfile);
     fwrite(nonce, 1, 24, passwordfile);
     fwrite(encrypted_password, 1, length, passwordfile);
     fclose(passwordfile);
+    return 0;
 }
+
 /* similar to strncpy but you can specify which index to start at 
  * I created this function because sometimes you need to concatinate while also removing data */
 void strwrite(char *dest, char *src, int start, int maxsize)
@@ -264,7 +295,7 @@ void strwrite(char *dest, char *src, int start, int maxsize)
 
 void walk(char *leadingpath, int len, int issubdir)
 {
-    if(leadingpath != NULL){
+    if (leadingpath != NULL) {
 	int pathlen = strlen(path);
 	path[pathlen] = '/';
 	strwrite(path, leadingpath, pathlen + 1, 4094 - pathlen);
@@ -286,11 +317,11 @@ void walk(char *leadingpath, int len, int issubdir)
 	} else if (de->d_type == DT_DIR) {
 	    walk(de->d_name, len, 1);
 	} else {
-        if(issubdir){
-	    printf("%s/%s\n", path + len + 1, de->d_name);
-        } else {
-        puts(de->d_name);
-        }
+	    if (issubdir) {
+		printf("%s/%s\n", path + len + 1, de->d_name);
+	    } else {
+		puts(de->d_name);
+	    }
 	}
     }
     if (leadingpath != NULL) {
@@ -300,29 +331,30 @@ void walk(char *leadingpath, int len, int issubdir)
     return;
 }
 
-void show(char *pwpath)
+int show(char *pwpath)
 {
     fputs("put your key password\n", stderr);
     char password[64];
     getpasswd(password);
     struct verifyreturn key = verify(password);
     if (key.matches == 0) {
-	fputs("the password you entered does not match with the key\n", stderr);
-	return;
+	fputs("the password you entered does not match with the key\n",
+	      stderr);
+	return 1;
     }
     uint8_t nonce[24];
     uint8_t mac[16];
     int exists = initpath(pwpath);
-    if (!exists){
+    if (!exists) {
 	fputs("password doesn't exist", stderr);
-        crypto_wipe(key.key, 32);
-	return;
+	crypto_wipe(key.key, 32);
+	return 1;
     }
     FILE *passfile = fopen(path, "rb");
-    if(passfile == NULL){
-    fputs("failed to open file\n", stderr);
-    crypto_wipe(key.key, 32);
-    return;
+    if (passfile == NULL) {
+	fputs("failed to open file\n", stderr);
+	crypto_wipe(key.key, 32);
+	return 1;
     }
     fseek(passfile, 0, SEEK_END);
     long filesize = ftell(passfile);
@@ -338,7 +370,7 @@ void show(char *pwpath)
 	(plain_text, key.key, nonce, mac, uint_password, length)) {
 	printf("message is corrupted\n");
 	crypto_wipe(key.key, 32);
-	return;
+	return 1;
     } else {
 	for (int i = 0; i < length; i++) {
 	    printf("%c", plain_text[i]);
@@ -347,45 +379,36 @@ void show(char *pwpath)
 	crypto_wipe(plain_text, 12);
 	crypto_wipe(key.key, 32);
     }
-
+    return 0;
 }
+
 
 int main(int argc, char *argv[])
 {
-    if(argv[1] == NULL || strcmp(argv[1], "help") == 0 ){
-	printf("Usage:\n\tpassman help\tdisplays help message\n\tpassman generate [name] [length]\tgenerates a password and securely stores it\n\tpassman show [name]\tprints the unencrypted value of a stored password\n\tpassman add\tprompts for a password and securely stores it\n\tpassman list\tlists the passwords that are stored\n");
+    if (argc < 2) {
+	printusage();
 	return 0;
-    }
-    if (strcmp(argv[1], "init") == 0) {
-	init();
+    } else if (strcmp(argv[1], "help") == 0) {
+	printusage();
 	return 0;
-    } else if (strcmp(argv[1], "generate") == 0) {
-	if (argc < 4) {
-	    fputs("not enough arguments passed for generate\n", stderr);
-	    return 1;
+    } else if (strcmp(argv[1], "generate") == 0 && argc > 2) {
+	if (argc == 3) {
+	    return generate(argv[2], 15);
+	} else {
+	    return generate(argv[2], atoi(argv[3]));
 	}
-	generate(argv[2], atoi(argv[3]));
-	return 0;
-    } else if (strcmp(argv[1], "show") == 0) {
-	if (argc < 3) {
-	    fputs("not enough arguments passed for show\n", stderr);
-	    return 1;
-	}
-	show(argv[2]);
-	return 0;
-    } else if (strcmp(argv[1], "add") == 0
-	       || strcmp(argv[1], "insert") == 0) {
-	if (argc < 3) {
-	    fputs("not enough arguments passed for add/insert\n", stderr);
-	    return 1;
-	}
+    } else if (strcmp(argv[1], "add") == 0 && argc > 2) {
 	add(argv[2]);
-	return 0;
+    } else if (strcmp(argv[1], "init") == 0) {
+	return init();
+    } else if (strcmp(argv[1], "show") == 0 && argc > 2) {
+	return show(argv[2]);
     } else if (strcmp(argv[1], "list") == 0) {
-        initpath("");
+	initpath("");
 	walk(NULL, strlen(path), 0);
-    } else {
-	fputs("command not found\n", stderr);
 	return 0;
+    } else {
+	printusage();
+	return 1;
     }
 }
